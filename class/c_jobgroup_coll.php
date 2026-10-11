@@ -178,7 +178,11 @@ class Jobgroup_coll {
 				
 				$item->freefld1 = $jobgroup->nbrSessies();
 				$item->freefld2 = $jobgroup->jgleider1;
-				$item->freefld3 = 'Vragen? Email ze naar de coördinator JobGroups op <a href="mailto: info@' . LOC_DOMAIN . '">info@' . LOC_DOMAIN . '</a>.';
+				// Contactgegevens staan per site in includes/configDB.php (LOC_JG_NAAM en LOC_JG_EMAIL).
+				// defined() voorkomt een fatale fout als de constante op een server (nog) ontbreekt.
+				$jgNaam  = defined('LOC_JG_NAAM')  ? LOC_JG_NAAM  : 'JobGroups';
+				$jgEmail = defined('LOC_JG_EMAIL') ? LOC_JG_EMAIL : 'info@' . LOC_DOMAIN;
+				$item->freefld3 = 'Vragen? Email ze naar de coördinator ' . $jgNaam . ' op <a href="mailto:' . $jgEmail . '">' . $jgEmail . '</a>.';
 				$agendaitemColl[] = $item;
 			} 
 		}

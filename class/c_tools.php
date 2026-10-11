@@ -1,7 +1,8 @@
 <?php
 require_once __DIR__ . '/../PHPMailer/src/PHPMailer.php';
 require_once __DIR__ . '/../PHPMailer/src/SMTP.php';
-require_once __DIR__ . '/../PHPMailer/src/Exception.php';	
+require_once __DIR__ . '/../PHPMailer/src/Exception.php';
+	
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
@@ -10,49 +11,206 @@ include_once ('c_keyrecord.php');
 class Tools
 {	
 	private static ?PHPMailer $mailer = null;  // PHP 7.4+: typed property
-
-	public static $statusArray = array (
-		'---' => '',
-		'000' => 'Nieuw',
-		'020' => 'Aanmelding bevestigd, wacht op reactie',
-		'030' => 'Contact gehad',
-		'100' => 'Intake gepland',
-		'101' => 'Intake afspraak niet nagekomen',
-		'110' => 'Intake afgenomen',
-		'120' => 'Intake gegevens bijgewerkt',
-		'200' => 'Intake akkoord en gearchiveerd',
-		'250' => 'Aangemeld voor Workshop NetWerken',
-		'260' => 'Uitgenodigd voor deelname JobGroup',
-		'300' => 'JobGroup geplaatst',
-		'301' => 'JobGroup plaatsing ingetrokken',
-		'310' => 'JobGroup iWIN geplaatst',
-		'311' => 'JobGroup iWIN plaatsing ingetrokken',
-		'320' => 'JobGroup ZZP geplaatst',
-		'321' => 'JobGroup ZZP plaatsing ingetrokken',
-		'400' => 'Jobgroup afgerond',
-		'401' => 'Jobgroup afgebroken',
-		'410' => 'Jobgroup iWIN afgerond',
-		'411' => 'Jobgroup iWIN afgebroken',
-		'420' => 'Jobgroup ZZP afgerond',
-		'421' => 'Jobgroup ZZP afgebroken',
-		'500' => 'Maatje aangemeld en gekoppeld',
-		'510' => 'Match-afspraak gemaakt',
-		'511' => 'Match-afspraak ingetrokken',
-		'520' => 'Begeleidingsovereenkomst getekend en gearchiveerd',
-		'550' => 'Groepsmaatje',
-		'590' => 'Maatje afgemeld en ontkoppeld',
-		'750' => 'Dolaard',
-		'800' => 'Uitstroom',
-		'810' => 'Uitstroom naar Werk/Opleiding',
-		'820' => 'Kopie contract aangeleverd',
-		'900' => 'Afronding',
-		'910' => 'Evaluatie-formulier verzonden',
-		'920' => 'Afzwaaibrief verzonden',
-		'940' => 'Doorverwezen naar andere instantie',
-		'950' => 'Uitgeschreven'
-	);
+	public static array $statusArray = [];
+			
 	
-	public static function ConvertTS ($date)
+    // -----------------------------------------------------------------------
+    // Nederlandstalige datum-helpers (vervangt deprecated strftime())
+    // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // Afbeeldingen in een map, voor een keuzelijst (okt 2026)
+    // Alleen echte afbeeldingen: geen .htaccess, geen verborgen bestanden
+    // (die beginnen met een punt) en geen submappen zoals thumbs/.
+    // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // veiligeHtml(): laat alleen toegestane HTML-opmaak door (okt 2026)
+    //
+    // h() maakt van ALLE HTML gewone tekst. Soms wil je juist wel opmaak tonen
+    // (een <b> of <br> in een postit, later de teksten uit Summernote), maar geen
+    // <script>, onclick="..." of javascript:-links. Deze functie:
+    //   - leest de HTML in met DOMDocument (de HTML-lezer van PHP);
+    //   - laat tags die in $tags staan staan, met alleen veilige attributen;
+    //   - gooit <script>, <style>, <iframe> e.d. weg, inclusief inhoud;
+    //   - van andere tags blijft alleen de tekst over.
+    // $tags: welke tags mogen. Standaard eenvoudige tekstopmaak.
+    // -----------------------------------------------------------------------
+    public const TAGS_INLINE = ['b', 'strong', 'i', 'em', 'u', 'br', 'span', 'small', 'mark', 'sup', 'sub'];
+    public const ATTR_INLINE = ['a' => ['href']];
+
+    // Voor teksten uit de Summernote-editor (forum, later nieuws en agenda)
+    public const TAGS_OPMAAK = ['p', 'div', 'br', 'hr', 'b', 'strong', 'i', 'em', 'u', 's', 'strike', 'sup', 'sub',
+        'span', 'font', 'small', 'mark', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'blockquote',
+        'pre', 'code', 'a', 'img', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'td', 'th', 'caption'];
+    public const ATTR_OPMAAK = [
+        '*'    => ['style'],						// bij elke toegestane tag; de inhoud wordt apart gefilterd
+        'a'    => ['href', 'target'],
+        'img'  => ['src', 'alt', 'width', 'height'],
+        'font' => ['color', 'face', 'size'],		// Summernote gebruikt soms nog <font color="...">
+        'td'   => ['colspan', 'rowspan'],
+        'th'   => ['colspan', 'rowspan'],
+        'ol'   => ['start'],
+    ];
+
+    // Kort: veiligeHtml() met de instellingen voor Summernote-teksten.
+    public static function opmaakHtml(?string $html): string
+    {
+        return self::veiligeHtml($html, self::TAGS_OPMAAK, self::ATTR_OPMAAK);
+    }
+
+    public static function veiligeHtml(?string $html, array $tags = self::TAGS_INLINE, array $attributen = self::ATTR_INLINE): string
+    {
+        $html = (string)$html;
+        if (trim($html) === '') {
+            return '';
+        }
+        $doc = new DOMDocument();
+        // De <meta charset> zorgt dat é, ë e.d. als UTF-8 gelezen worden.
+        // libxml-meldingen over "onbekende tags" zijn niet interessant: onderdrukken.
+        $oud = libxml_use_internal_errors(true);
+        $doc->loadHTML('<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><div id="vh">'
+            . $html . '</div></body></html>');
+        libxml_clear_errors();
+        libxml_use_internal_errors($oud);
+
+        $wortel = $doc->getElementById('vh');
+        if ($wortel === null) {
+            return h($html);	// iets onleesbaars: veilig als tekst tonen
+        }
+        self::schoonKnoop($wortel, $tags, $attributen);
+
+        $uit = '';
+        foreach ($wortel->childNodes as $kind) {
+            $uit .= $doc->saveHTML($kind);
+        }
+        return $uit;
+    }
+
+    private static function schoonKnoop(DOMNode $knoop, array $tags, array $attributen): void
+    {
+        $weg = ['script', 'style', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'textarea', 'select', 'link', 'meta', 'svg', 'math'];
+        // Eerst een kopie van de lijst kinderen maken: we veranderen de boom tijdens het doorlopen.
+        foreach (iterator_to_array($knoop->childNodes) as $kind) {
+            if ($kind instanceof DOMComment) {
+                $knoop->removeChild($kind);
+                continue;
+            }
+            if (!($kind instanceof DOMElement)) {
+                continue;	// gewone tekst is altijd goed (DOMDocument escapet die zelf bij saveHTML)
+            }
+            $naam = strtolower($kind->nodeName);
+            if (in_array($naam, $weg, true)) {
+                $knoop->removeChild($kind);	// helemaal weg, inclusief inhoud
+                continue;
+            }
+            self::schoonKnoop($kind, $tags, $attributen);	// eerst de kinderen van dit element
+            if (!in_array($naam, $tags, true)) {
+                // Tag niet toegestaan: de tag weghalen, de inhoud (tekst) laten staan.
+                while ($kind->firstChild) {
+                    $knoop->insertBefore($kind->firstChild, $kind);
+                }
+                $knoop->removeChild($kind);
+                continue;
+            }
+            // Toegestane tag: alleen de toegestane attributen houden, en die controleren.
+            $magHier = array_merge($attributen['*'] ?? [], $attributen[$naam] ?? []);
+            foreach (iterator_to_array($kind->attributes) as $attr) {
+                $an  = strtolower($attr->nodeName);
+                $val = trim($attr->nodeValue);
+                $ok  = in_array($an, $magHier, true);
+                if ($ok && ($an === 'href' || $an === 'src')) {
+                    $ok = self::veiligeUrl($val, $an === 'src');
+                } elseif ($ok && $an === 'style') {
+                    $val = self::veiligeStyle($val);
+                    $ok  = ($val !== '');
+                    if ($ok) {
+                        $kind->setAttribute('style', $val);
+                    }
+                } elseif ($ok && $an === 'target') {
+                    $ok = ($val === '_blank');
+                }
+                if (!$ok) {
+                    $kind->removeAttribute($attr->nodeName);
+                }
+            }
+            if ($naam === 'a') {
+                $kind->setAttribute('rel', 'noopener noreferrer');
+            }
+        }
+    }
+
+    private static function veiligeUrl(string $url, bool $afbeelding): bool
+    {
+        // Toegestaan: http(s), mailto (niet bij afbeeldingen), relatieve adressen,
+        // en bij afbeeldingen ook "data:image/..." (Summernote zet geplakte plaatjes zo in de tekst).
+        // Niet toegestaan: javascript:, vbscript:, data:text/html en dergelijke.
+        if (preg_match('~^https?://~i', $url)) return true;
+        if (!$afbeelding && preg_match('~^mailto:~i', $url)) return true;
+        if ($afbeelding && preg_match('~^data:image/(png|jpe?g|gif|webp);base64,~i', $url)) return true;
+        return (bool)preg_match('~^(/|\./|\.\./|[a-z0-9_-]+(/|\.|$))~i', $url) && !preg_match('~^[a-z][a-z0-9+.-]*:~i', $url);
+    }
+
+    private static function veiligeStyle(string $style): string
+    {
+        // Alleen onschuldige CSS-eigenschappen (kleur, uitlijning, maten, lettertype).
+        // Alles met url(, expression( of javascript: valt weg.
+        $mag = ['color', 'background-color', 'text-align', 'font-weight', 'font-style', 'font-size', 'font-family',
+                'text-decoration', 'line-height', 'width', 'height', 'max-width', 'float', 'margin', 'margin-left',
+                'margin-right', 'margin-top', 'margin-bottom', 'padding', 'padding-left', 'padding-right',
+                'padding-top', 'padding-bottom', 'border', 'border-collapse', 'vertical-align', 'list-style-type'];
+        $uit = [];
+        foreach (explode(';', $style) as $regel) {
+            if (strpos($regel, ':') === false) continue;
+            [$eig, $waarde] = array_map('trim', explode(':', $regel, 2));
+            $eig = strtolower($eig);
+            if (!in_array($eig, $mag, true)) continue;
+            if (preg_match('~url\s*\(|expression|javascript:|[<>\\\\]~i', $waarde)) continue;
+            $uit[] = $eig . ': ' . $waarde;
+        }
+        return implode('; ', $uit);
+    }
+
+    public static function afbeeldingen(string $map): array
+    {
+        $soorten = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'];
+        $lijst = [];
+        foreach (scandir($map) ?: [] as $naam) {
+            if ($naam[0] === '.') continue;							// ., .., .htaccess, .DS_Store
+            if (!is_file(rtrim($map, '/') . '/' . $naam)) continue;	// mappen overslaan
+            if (!in_array(strtolower(pathinfo($naam, PATHINFO_EXTENSION)), $soorten, true)) continue;
+            $lijst[] = $naam;
+        }
+        natcasesort($lijst);	// "natuurlijk" sorteren, zonder verschil tussen hoofd- en kleine letters
+        return array_values($lijst);
+    }
+
+    public static function nlMaand(DateTimeImmutable $d): string
+    {
+        $maanden = [
+            1 => 'januari',  2 => 'februari', 3 => 'maart',
+            4 => 'april',    5 => 'mei',       6 => 'juni',
+            7 => 'juli',     8 => 'augustus',  9 => 'september',
+            10 => 'oktober', 11 => 'november', 12 => 'december',
+        ];
+        return $maanden[(int)$d->format('n')];
+    }
+
+    public static function nlWeekdag(DateTimeImmutable $d): string
+    {
+        $dagen = [
+            'Monday'    => 'maandag',  'Tuesday'  => 'dinsdag',
+            'Wednesday' => 'woensdag', 'Thursday' => 'donderdag',
+            'Friday'    => 'vrijdag',  'Saturday' => 'zaterdag',
+            'Sunday'    => 'zondag',
+        ];
+        return $dagen[$d->format('l')];
+    }
+
+    public static function nlDatumLang(DateTimeImmutable $d): string
+    {
+        return (int)$d->format('j') . ' ' . self::nlMaand($d) . ' ' . $d->format('Y');
+    }
+
+    public static function ConvertTS ($date)
 	{
 		$months = [
 			'January'		=> 'januari',
@@ -95,7 +253,7 @@ class Tools
 		];
 
 		$tmpdate2 = '';
-		if ($date != '')
+		if ($date != '' && $date != '0000-00-00 00:00:00')
 		{
 			/* als yyyy-mm-dd hh:mm:ss ==> dd mmm yyyy hh:mm */
 			if (preg_match("/^[0-9]{4}-[0-9]{1,2}-[0-9]{1,2} [0-9]{1,2}:[0-9]{1,2}:[0-9]{1,2}$/", $date) !== 0)
@@ -129,7 +287,9 @@ class Tools
 		return $tmpdate2;
 	}
 	
-	public static function ConvertTS2 ($date, $par)
+	
+
+    public static function ConvertTS2 ($date, $par)
 	{
 		$months = [
 			'January'		=> 'januari',
@@ -369,6 +529,17 @@ class Tools
 
 	public static function MailRoom($nameTo, $emailTo, $onderwerp, $tekst)
 	{
+		/* Testmodus (alleen lokaal in MAMP): zet in includes/configDB.php
+		     define("MAIL_TESTMODUS", true);
+		   Dan wordt de mail niet verstuurd, maar in de PHP error log gezet
+		   (MAMP: /Applications/MAMP/logs/php_error.log). Op de servers staat
+		   deze regel niet in configDB.php, dus daar wordt gewoon verstuurd. */
+		if (defined('MAIL_TESTMODUS') && MAIL_TESTMODUS === true)
+		{
+			error_log("MAIL_TESTMODUS - niet verstuurd\nAan: $nameTo <$emailTo>\nOnderwerp: $onderwerp\n"
+				. html_entity_decode(strip_tags($tekst), ENT_QUOTES, 'UTF-8'));
+			return true;
+		}
 		// Maak een nieuw PHPMailer-object
 		$mail = self::getMailer();
 		// echo 'MailRoom is gestart.<br/>';
@@ -434,4 +605,7 @@ class Tools
 		return $keyrecord->waarde;
 	}
 }
+
+$file = __DIR__ . '/../includes/statuslijst.php';
+Tools::$statusArray = file_exists($file) ? include_once $file : [];
 ?>
