@@ -17,7 +17,7 @@
 	 				<p>
 	 					In de voorafgaande bijeenkomsten verzamel je de informatie die je nodig hebt om jezelf zelfverzekerd te presenteren.</p>
 
-	 				<p>Wil je weten wanneer de volgende JobGroup start, kijk dan in <a href="aagenda.php">de agenda</a>.
+	 				<p>Wil je weten wanneer de volgende JobGroup start, kijk dan in <a href="agenda.php">de agenda</a>.
 	 					Na afloop van de JobGroup kijken we samen of je nog persoonlijk begeleid wil worden met een maatje.</p>
 	 			</div>
 	 		</div>
