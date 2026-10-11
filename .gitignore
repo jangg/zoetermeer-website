@@ -1,0 +1,16 @@
+# macOS- en editor-rommel
+.DS_Store
+.fuse_hidden*
+.nova/
+
+# configDB.php bevat de echte wachtwoorden van de server
+includes/configDB.php
+
+# Logs en mediamappen (foto's, pdf's, video's, ruim 250 MB) blijven buiten git
+includes/logs/
+img/
+docs/
+newsimages/
+assets/
+js/
+vids/
