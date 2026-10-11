@@ -1,4 +1,5 @@
 <?php
+include_once 'config.php';   // nodig voor Tools::MailRoom (ontbrak: aanmelding nieuwsbrief gaf een fatale fout)
 
 if (isset($_POST['email'])) 
 {
