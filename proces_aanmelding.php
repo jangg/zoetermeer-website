@@ -92,7 +92,7 @@ if (isset($_POST['sendBut']) && $_POST['sendBut'] == 'sendForm')
 	
 	$message = 'Er is een nieuwe aanmelding binnengekomen via de website ' . LOC_DOMAIN . '<br/><br/><br/>' . $message;
 	
-	Tools::MailRoom('Coordinator', 'aanmelding@' . LOC_WEBSITE_PUB, 'Aanmelding '. LOC_NAME, $message);
+	Tools::MailRoom('Coordinator', 'aanmelding@' . LOC_DOMAIN_PUB, 'Aanmelding '. LOC_NAME, $message);
 	// error_log($message);
 	/*    
 	JobHulpMaatje       = ja ==> $opties +1
