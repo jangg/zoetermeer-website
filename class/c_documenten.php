@@ -21,10 +21,11 @@
  *   'eigen'        B: persoonlijke documenten (niet gekozen; wordt niet meer getoond,
  *                  staat nog in de database voor documenten uit de testperiode)
  *
- * WIE WAT MAG, staat in Document::magRuimte() en Document::magWijzigen()
- * (en de rechten documenten, documenten_gedeeld en documenten_werkzoekenden
- * in includes/rechten.php). De pagina's vragen het altijd hier na, zodat de
- * regels op één plek staan.
+ * WIE WAT MAG, staat in Document::magPagina(), Document::magRuimte() en
+ * Document::magWijzigen() (en de rechten documenten_gedeeld (A),
+ * documenten_eigen (B) en documenten_werkzoekenden (C) in includes/rechten.php;
+ * per gebruiker in te stellen op het Systeem-scherm, nov 2026).
+ * De pagina's vragen het altijd hier na, zodat de regels op één plek staan.
  *
  * Deze classes lezen en schrijven alleen hun eigen tabellen (document,
  * docmap, instelling). Gegevens van werkzoekenden, maatjes en gebruikers
@@ -347,14 +348,15 @@ class Document
 	}
 
 	/* De werkzoekenden die deze gebruiker in Documenten ziet, op achternaam:
-	   de beheerder en coördinatoren (recht documenten_werkzoekenden) alle,
-	   een maatje alleen de zijne. */
+	   met recht documenten_werkzoekenden (C) alle, met documenten_eigen (B)
+	   alleen de werkzoekenden die hij als maatje begeleidt, anders geen. */
 	public static function werkzoekendenVoor (int $userId): array
 	{
 		$volgorde = [['person.achternaam', 'ASC']];
-		if (heeft_recht('beheerder') || heeft_recht('documenten_werkzoekenden')) {
+		if (heeft_recht('documenten_werkzoekenden')) {
 			$coll = new Werkzoekende_coll([], $volgorde);
 		} else {
+			if (!heeft_recht('documenten_eigen')) return [];
 			$mtjId = self::maatjeIdVan($userId);
 			if ($mtjId === null) return [];
 			$coll = new Werkzoekende_coll([['werkzkd.id_maatje', $mtjId]], $volgorde);
@@ -372,18 +374,28 @@ class Document
 	 * Wie mag wat
 	 * ---------------------------------------------------------- */
 
+	/* Mag deze gebruiker de pagina Documenten openen? Ja, als hij minstens
+	   één van de drie documentenrechten heeft (A, B of C). */
+	public static function magPagina (): bool
+	{
+		return heeft_recht('documenten_gedeeld') || heeft_recht('documenten_eigen')
+			|| heeft_recht('documenten_werkzoekenden');
+	}
+
 	/* Mag deze gebruiker in deze ruimte kijken (en dus ook uploaden en mappen maken)?
-	   gedeeld:      recht documenten_gedeeld (coördinatoren)
-	   werkzoekende: de werkzoekende moet bestaan; dan de coördinatoren (recht
-	                 documenten_werkzoekenden) en het maatje van die werkzoekende
+	   gedeeld:      recht documenten_gedeeld (A)
+	   werkzoekende: de werkzoekende moet bestaan; dan wie het recht
+	                 documenten_werkzoekenden (C) heeft, en het maatje van die
+	                 werkzoekende als hij het recht documenten_eigen (B) heeft
 	   eigen:        niet meer in gebruik; alleen de beheerder
-	   De beheerder mag overal. */
+	   De beheerder mag overal (heeft_recht() geeft voor hem altijd true). */
 	public static function magRuimte (string $ruimte, ?int $eigenaar, int $userId): bool
 	{
 		if ($ruimte === 'werkzoekende') {
 			$wzk = self::werkzoekende($eigenaar);
 			if ($wzk === null) return false;
-			if (heeft_recht('beheerder') || heeft_recht('documenten_werkzoekenden')) return true;
+			if (heeft_recht('documenten_werkzoekenden')) return true;
+			if (!heeft_recht('documenten_eigen')) return false;
 			$mtjId = self::maatjeIdVan($userId);
 			return $mtjId !== null && (int)$wzk->id_maatje === $mtjId;
 		}

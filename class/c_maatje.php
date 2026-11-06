@@ -159,6 +159,33 @@ class Maatje extends Person
 		return $maatjerow;
 	}
 	
+	public static function zonderGebruiker (): array
+	{
+		/* Nov 2026, voor het Systeem-scherm: maatjes (niet verwijderd) die nog
+		   geen account hebben. Alleen zij kunnen een gebruiker worden.
+		   LEFT JOIN + "user.id IS NULL": neem elk maatje, en houd alleen de
+		   maatjes over waarbij geen user-regel is gevonden.
+		   Geeft een lijst van arrays met person_id, voornaam, tussenvoegsels,
+		   achternaam en emailadres. */
+		global $connection;
+		try
+		{
+			openDB();
+			$sql = "SELECT person.person_id, person.voornaam, person.tussenvoegsels, person.achternaam, person.emailadres
+					FROM maatje
+					JOIN person ON maatje.id_person = person.person_id
+					LEFT JOIN user ON user.id_person = maatje.id_person
+					WHERE person.delind = 'n' AND user.id IS NULL
+					ORDER BY person.achternaam, person.voornaam";
+			return $connection->query($sql)->fetchAll(PDO::FETCH_ASSOC);
+		}
+		catch (PDOException $e)
+		{
+			error_log('Maatjes zonder account (maatje 5) mislukt: ' . $e->getMessage());
+			return [];
+		}
+	}
+
 	public function saveToDB () 
 	{
 		openDB();
