@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+
+# Interne mappen niet bezoeken.
+Disallow: /class/
+Disallow: /includes/
+Disallow: /PHPMailer/
