@@ -14,3 +14,6 @@ newsimages/
 assets/
 js/
 vids/
+
+# Testbestandje van Jan (toont alleen de PHP-versie); hoort niet in git
+versiePHP.php
