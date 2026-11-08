@@ -364,6 +364,15 @@ class Document
 		return $coll->werkzoekendeColl;
 	}
 
+	/* Is deze werkzoekende actief? Dezelfde regel als in het WAS
+	   (beheerwas/overz_werkzoekenden.php): status t/m 599 is actief,
+	   600 en hoger (uitgeschreven, uitgestroomd e.d.) is niet-actief.
+	   De status is een tekst van drie cijfers ('000'), daarom (int). */
+	public static function isActief (Werkzoekende $w): bool
+	{
+		return (int)$w->status <= 599;
+	}
+
 	/* "Voornaam tussenvoegsels Achternaam" van een User, Maatje of Werkzoekende. */
 	public static function naamVan (object $p): string
 	{
