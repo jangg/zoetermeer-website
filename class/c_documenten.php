@@ -305,6 +305,27 @@ class Document
 		return (int)$connection->query("SELECT COALESCE(SUM(grootte), 0) FROM document WHERE ruimte = 'gedeeld'")->fetchColumn();
 	}
 
+	/* Hoeveel bytes er per ruimte in gebruik zijn: ['gedeeld' => .., 'werkzoekende' => .., 'eigen' => ..].
+	   Een ruimte zonder documenten staat erin met 0. Voor het overzicht in documenten_beheer.php. */
+	public static function gebruiktPerRuimte (): array
+	{
+		return array_map(fn($r) => $r['bytes'], self::opslagPerRuimte());
+	}
+
+	/* Per ruimte het aantal documenten en de bytes (nov 2026):
+	   ['gedeeld' => ['aantal' => 12, 'bytes' => 3456789], 'werkzoekende' => [...], 'eigen' => [...]].
+	   Eén query: COUNT(*) telt de documenten, SUM(grootte) telt de bytes op, per ruimte (GROUP BY). */
+	public static function opslagPerRuimte (): array
+	{
+		global $connection;
+		$opslag = [];
+		foreach (['gedeeld', 'werkzoekende', 'eigen'] as $ruimte) $opslag[$ruimte] = ['aantal' => 0, 'bytes' => 0];
+		$rijen = $connection->query("SELECT ruimte, COUNT(*), COALESCE(SUM(grootte), 0) FROM document GROUP BY ruimte")
+			->fetchAll(PDO::FETCH_NUM);
+		foreach ($rijen as [$ruimte, $aantal, $bytes]) $opslag[$ruimte] = ['aantal' => (int)$aantal, 'bytes' => (int)$bytes];
+		return $opslag;
+	}
+
 	/* Per werkzoekende het aantal documenten: [werkzkd.id => aantal]. */
 	public static function aantallenPerWerkzoekende (): array
 	{
@@ -545,6 +566,109 @@ class Document
 		if ($pad !== null && is_file($pad)) {
 			@unlink($pad);
 		}
+	}
+
+	/* ----------------------------------------------------------
+	 * Bestanden die het intranet zelf maakt (nov 2026)
+	 * ---------------------------------------------------------- */
+
+	/* De naam waaronder het intakeformulier van een werkzoekende wordt opgeslagen,
+	   met de datum van vandaag: "Intakeformulier Jan de Vries 2026-11-13.pdf".
+	   Jaar-maand-dag, zodat de formulieren in de lijst op datum staan.
+	   Op één plek, zodat intake.php (de knop) en intake_pdf.php (het opslaan)
+	   altijd precies dezelfde naam gebruiken. */
+	public static function intakeNaam (Werkzoekende $w): string
+	{
+		return self::schoneNaam('Intakeformulier ' . self::naamVan($w) . ' ' . date('Y-m-d') . '.pdf') ?? 'Intakeformulier.pdf';
+	}
+
+	/* Het document met precies deze naam in deze map ($map = null: het bovenste
+	   niveau), of null als het er niet is. De database vergelijkt zonder op
+	   hoofdletters te letten, net als Windows en macOS dat doen. */
+	public static function zoekNaamInMap (string $ruimte, ?int $eigenaar, ?int $map, string $naam): ?array
+	{
+		global $connection;
+		$stmt = $connection->prepare("SELECT * FROM document WHERE ruimte = :r AND eigenaar_id <=> :e "
+			. "AND map_id <=> :m AND naam = :n ORDER BY id LIMIT 1");
+		$stmt->execute([':r' => $ruimte, ':e' => $eigenaar, ':m' => $map, ':n' => $naam]);
+		return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+	}
+
+	/* Bewaart een bestand dat het intranet zelf heeft gemaakt, zoals de
+	   intake-PDF. Anders dan upload() komt de inhoud niet uit een formulier
+	   maar uit een tekst ($inhoud), dus geen is_uploaded_file()/move_uploaded_file()
+	   maar file_put_contents(). De lijst met toegestane soorten van de beheerder
+	   geldt hier niet: wat het intranet zelf maakt, vertrouwen we.
+	   $vervang = true: staat er al een document met dezelfde naam op dezelfde
+	   plek, dan wordt dat vervangen (zelfde regel in de database, nieuwe inhoud).
+	   $vervang = false: dan gebeurt er niets en komt er een melding terug.
+	   Geeft null terug als het gelukt is, anders een foutmelding voor de gebruiker. */
+	public static function bewaarInhoud (string $inhoud, string $naam, string $ruimte, ?int $eigenaar, ?int $map, int $door, bool $vervang = false): ?string
+	{
+		global $connection;
+		$naam = self::schoneNaam($naam);
+		if ($naam === null) return 'Het bestand heeft geen geldige naam.';
+		$grootte = strlen($inhoud);			// strlen telt bytes, precies wat we willen
+		if ($grootte === 0) return "$naam is leeg en is niet opgeslagen.";
+
+		// 1. Bestaat de naam al?
+		$bestaand = self::zoekNaamInMap($ruimte, $eigenaar, $map, $naam);
+		if ($bestaand && !$vervang) {
+			return "Er staat al een document \"$naam\". Het is niet vervangen.";
+		}
+
+		// 2. Het maximum per persoon. Vervangt iemand zijn eigen document,
+		//    dan telt het oude document niet meer mee.
+		if ($ruimte !== 'gedeeld' && !heeft_recht('beheerder')) {
+			$al = self::gebruikt($door);
+			if ($bestaand && (int)$bestaand['gemaakt_door'] === $door) $al -= (int)$bestaand['grootte'];
+			if ($al + $grootte > Instelling::quotumBytes()) {
+				return "$naam past er niet meer bij: je hebt al " . self::mb($al) . ' van de '
+					. self::mb(Instelling::quotumBytes()) . ' in gebruik. Verwijder eerst iets wat je niet meer nodig hebt.';
+			}
+		}
+
+		// 3. Het bestand wegschrijven onder een nieuwe willekeurige naam
+		$opslag = self::opslagmap();
+		if ($opslag === null) {
+			return 'De documentenmap op de server is niet ingesteld. Meld dit aan de beheerder.';
+		}
+		$opslagnaam = bin2hex(random_bytes(16));
+		$doel = $opslag . $opslagnaam;
+		if (file_put_contents($doel, $inhoud) !== $grootte) {
+			@unlink($doel);
+			error_log("Document::bewaarInhoud: kan niet schrijven naar $doel");
+			return "$naam kon niet worden opgeslagen. Meld dit aan de beheerder.";
+		}
+		@chmod($doel, 0640);
+		$ext  = strtolower(pathinfo($naam, PATHINFO_EXTENSION));
+		$mime = (new finfo(FILEINFO_MIME_TYPE))->buffer($inhoud) ?: 'application/octet-stream';
+
+		// 4. De database. Bij vervangen: dezelfde regel (zelfde id) krijgt het nieuwe
+		//    bestand, en pas DAARNA gaat het oude bestand weg. Mislukt de database,
+		//    dan blijft het oude document dus gewoon heel.
+		try {
+			if ($bestaand) {
+				$stmt = $connection->prepare("UPDATE document SET opslagnaam = :o, extensie = :x, mime = :t, "
+					. "grootte = :g, gemaakt_door = :d, gemaakt_op = NOW() WHERE id = :id");
+				$stmt->execute([':o' => $opslagnaam, ':x' => $ext, ':t' => $mime, ':g' => $grootte,
+					':d' => $door, ':id' => $bestaand['id']]);
+			} else {
+				$stmt = $connection->prepare("INSERT INTO document (ruimte, eigenaar_id, map_id, naam, opslagnaam, extensie, "
+					. "mime, grootte, gemaakt_door, gemaakt_op) VALUES (:r, :e, :m, :n, :o, :x, :t, :g, :d, NOW())");
+				$stmt->execute([':r' => $ruimte, ':e' => $eigenaar, ':m' => $map, ':n' => $naam, ':o' => $opslagnaam,
+					':x' => $ext, ':t' => $mime, ':g' => $grootte, ':d' => $door]);
+			}
+		} catch (PDOException $e) {
+			@unlink($doel);
+			error_log('Document::bewaarInhoud database: ' . $e->getMessage());
+			return "$naam kon niet worden opgeslagen. Meld dit aan de beheerder.";
+		}
+		if ($bestaand) {
+			$oud = self::pad($bestaand);
+			if ($oud !== null && is_file($oud)) @unlink($oud);
+		}
+		return null;
 	}
 
 	/* ----------------------------------------------------------
